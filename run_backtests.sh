@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -e
+mkdir -p results/logs
+mkdir -p results/figures
+mkdir -p results/summary
 
 echo "Running local research summary..."
 python evaluate.py

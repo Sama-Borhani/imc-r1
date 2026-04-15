@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -28,7 +29,33 @@ class Trader:
     def __init__(self) -> None:
         self.memory = ProductMemory()
 
+    def load_memory(self, trader_data: str) -> None:
+        if not trader_data:
+            self.memory = ProductMemory()
+            return
+
+        try:
+            raw = json.loads(trader_data)
+            self.memory = ProductMemory(
+                pepper_intercept_samples=raw.get("pepper_intercept_samples", []),
+                pepper_intercept_estimate=raw.get(
+                    "pepper_intercept_estimate",
+                    PEPPER_INITIAL_INTERCEPT,
+                ),
+            )
+        except Exception:
+            self.memory = ProductMemory()
+
+    def dump_memory(self) -> str:
+        payload = {
+            "pepper_intercept_samples": self.memory.pepper_intercept_samples[-PEPPER_INTERCEPT_WINDOW:],
+            "pepper_intercept_estimate": self.memory.pepper_intercept_estimate,
+        }
+        return json.dumps(payload, separators=(",", ":"))    
+
     def run(self, state: TradingState):
+        self.load_memory(state.traderData)
+
         result: Dict[str, List[Order]] = {}
 
         for product, order_depth in state.order_depths.items():
@@ -38,7 +65,7 @@ class Trader:
                 result[product] = self.trade_pepper(state, order_depth)
 
         conversions = 0
-        trader_data = ""
+        trader_data = self.dump_memory()
         return result, conversions, trader_data
 
     def trade_osmium(self, state: TradingState, order_depth: OrderDepth) -> List[Order]:
