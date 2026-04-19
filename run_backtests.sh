@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-set -e
-mkdir -p results/logs
-mkdir -p results/figures
-mkdir -p results/summary
+#
+# Naive-sim replay of submission.py on all ROUND_2 days. Directional sanity
+# only — NOT the official prosperity matcher (see r1/notes.md for why the
+# numbers under-count fills).
+#
+# For final sign-off, use ./backtest.sh (invokes prosperity3bt).
 
-echo "Running local research summary..."
-python evaluate.py
+set -euo pipefail
 
-echo "Running Prosperity 4 backtester on round 1 custom data..."
-prosperity4btest trader.py 1 --data data --merge-pnl --out results/logs/backtest_round1.log
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PY="$HERE/myvenv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  PY="$HERE/.venv/bin/python"
+fi
+DATA="$HERE/ROUND_2"
+TRADER="$HERE/submission.py"
 
-echo "Conservative pass with no market-trade matching..."
-prosperity4btest trader.py 1 --data data --merge-pnl --match-trades none --out results/logs/backtest_round1_notrades.log
-
-echo "Moderate pass with only worse-price market-trade matching..."
-prosperity4btest trader.py 1 --data data --merge-pnl --match-trades worse --out results/logs/backtest_round1_worse.log
+echo "=== submission.py on ROUND_2 ==="
+for d in -1 0 1; do
+  echo "--- day $d ---"
+  "$PY" "$HERE/backtest_sim.py" "$TRADER" "$DATA/prices_round_2_day_${d}.csv"
+done

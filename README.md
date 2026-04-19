@@ -1,63 +1,34 @@
-# IMC Prosperity Round 1
+# IMC Prosperity
 
-This repo is a lean Round 1 setup for:
-- `ASH_COATED_OSMIUM`
-- `INTARIAN_PEPPER_ROOT`
+Trading strategies for IMC Prosperity rounds.
 
-## Strategy summary
+## Products
 
-### Osmium
-- Treat as fixed fair value around `10000`
-- Take stale quotes first
-- Then quote inside the spread
-- Skew reservation price by inventory
+- `ASH_COATED_OSMIUM` — EMA-blended fair value, imbalance/residual/spread alpha
+- `INTARIAN_PEPPER_ROOT` — OLS trend fair value, residual mean-reversion alpha
 
-### Pepper
-- Treat fair value as:
-  `intercept + timestamp / 1000`
-- Estimate intercept online from robust midpoints
-- Take stale quotes first
-- Then quote inside the spread
-- Use slightly stronger inventory control than Osmium
+## Structure
 
-## Setup
-
-1. Upload the provided CSV files into `data/`
-2. Open in GitHub Codespaces or locally in VS Code
-3. Install dependencies:
-
-```bash
-pip install -r requirements.txt
+```
+submission.py       active submission (Round 2)
+params.py           per-product config / tunable knobs
+evaluate.py         data analysis
+datamodel.py        exchange datamodel
+backtest_sim.py     naive local replay (directional sanity check)
+backtest.sh         official backtester
+run_backtests.sh    runs backtest_sim.py across all ROUND_2 days
+ROUND_2/            price + trade CSVs for Round 2
+r1/                 archived Round 1 files
 ```
 
-4. Run the data analysis summary:
+## Backtesting
 
-```bash
-python evaluate.py
-```
-
-5. Install the public Prosperity 4 backtester:
-
-```bash
-pip install -U prosperity4btest
-```
-
-6. Run:
-
+Naive sim (fast, approximate):
 ```bash
 bash run_backtests.sh
 ```
 
-## Current priorities
-- Confirm official position limits
-- Confirm exact product names in the simulator
-- Backtest v1 trader
-- Tune inventory skew and taker thresholds
-- Compare local behavior with official site results
-
-## Files
-- `trader.py`: submission trader
-- `params.py`: tunable thresholds
-- `evaluate.py`: quick data research and plots
-- `research_r1.ipynb`: notebook for ad hoc validation
-- `run_backtests.sh`: wrapper for local runs
+Official backtester:
+```bash
+bash backtest.sh
+```

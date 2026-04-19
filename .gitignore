@@ -7,3 +7,8 @@ results/logs/*
 results/figures/*
 results/summary/*
 external/
+myvenv
+.claude
+.devcontainer
+270908/*
+notes.md
