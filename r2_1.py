@@ -10,8 +10,9 @@ class Trader:
         self.osmium_fv = 10000
         self.pepper_window = 20
 
-    def get_skew(self, pos, limit, intensity=3.0):
+    def get_skew(self, pos: int, limit: int, intensity: float = 3.0) -> float:
         """Calculates price shift based on inventory to encourage flattening."""
+        # intensity 3.0 means at max inventory, we shift prices by 3 ticks
         return -1 * (pos / limit) * intensity
 
     def run(self, state: TradingState):
@@ -19,21 +20,26 @@ class Trader:
         conversions = 0
         
         # PERSISTENCE: Retrieve pepper prices from traderData string
+        # This keeps your SMA accurate even if the class is reset
         pepper_prices = []
         if state.traderData:
             try:
                 pepper_prices = json.loads(state.traderData)
-            except:
+            except (json.JSONDecodeError, TypeError):
                 pepper_prices = []
 
-        for product in state.order_depths:
+        for product in ["ASH_COATED_OSMIUM", "INTARIAN_PEPPER_ROOT"]:
+            if product not in state.order_depths:
+                continue
+                
             order_depth = state.order_depths[product]
             orders: List[Order] = []
             
+            # Current inventory position
             current_pos = state.position.get(product, 0)
             limit = self.limits[product]
             
-            # Get best market prices
+            # Identify best market prices
             best_bid = max(order_depth.buy_orders.keys()) if order_depth.buy_orders else None
             best_ask = min(order_depth.sell_orders.keys()) if order_depth.sell_orders else None
             
@@ -45,32 +51,33 @@ class Trader:
             # 1. Determine Fair Value (FV)
             if product == "ASH_COATED_OSMIUM":
                 fv = self.osmium_fv
-            else: # PEPPER
+            else: # INTARIAN_PEPPER_ROOT
                 pepper_prices.append(mid_price)
                 if len(pepper_prices) > self.pepper_window:
                     pepper_prices.pop(0)
                 fv = sum(pepper_prices) / len(pepper_prices)
 
             # 2. Calculate Skewed Quotes
-            # High intensity skew (3.0) helps keep inventory near zero
             skew = self.get_skew(current_pos, limit, intensity=3.0)
             spread_buffer = 1 if product == "ASH_COATED_OSMIUM" else 2
             
+            # Calculate intended prices (must be integers)
             my_bid = int(round(fv - spread_buffer + skew))
             my_ask = int(round(fv + spread_buffer + skew))
 
-            # 3. Passive Guardrails
-            # Ensure we are always the 'maker' (passive), not the 'taker'
+            # 3. Passive Guardrails (Market Making)
+            # We want to be the best bid/ask or match it, but never cross it.
             my_bid = min(my_bid, best_bid) 
             my_ask = max(my_ask, best_ask)
             
-            # Ensure my_bid is at least 1 tick below my_ask to avoid self-crossing
+            # Prevent self-crossing logic error
             if my_bid >= my_ask:
                 my_bid = my_ask - 1
 
-            # 4. Create Orders
+            # 4. Create Order Volumes
+            # We quote our entire remaining capacity
             buy_vol = limit - current_pos
-            sell_vol = -limit - current_pos # Negative for sells
+            sell_vol = -limit - current_pos # Sells are negative quantities
 
             if buy_vol > 0:
                 orders.append(Order(product, my_bid, buy_vol))
@@ -79,7 +86,8 @@ class Trader:
 
             result[product] = orders
 
-        # Serialize state for the next tick
+        # Serialize our state (pepper price list) for the next tick
         traderData = json.dumps(pepper_prices)
 
+        # IMPORTANT: Return all 3 required values
         return result, conversions, traderData
