@@ -26,13 +26,14 @@ ENDGAME_TS = 999_500
 
 class Trader:
     def bid(self) -> int:
+        """Determines extra market access (Round 2 only)."""
         return 1_000
 
     def run(self, state: TradingState):
         result: Dict[str, List[Order]] = {}
         data = json.loads(state.traderData) if state.traderData else {}
 
-        # 1. ACO Fair Value (EWMA)
+        # 1. ACO Fair Value (EWMA) - Replaces static 10k anchor
         aco_fv = data.get("fv", 10000.0)
         if ACO in state.order_depths:
             d = state.order_depths[ACO]
@@ -41,7 +42,7 @@ class Trader:
                 aco_fv = (ACO_EWMA_ALPHA * mid) + (1.0 - ACO_EWMA_ALPHA) * aco_fv
         data["fv"] = aco_fv
 
-        # 2. IPR Adaptive Intercept
+        # 2. IPR Adaptive Intercept - Tracks trend starting point
         ipr_int = data.get("ipr_int", 12000.0)
         if IPR in state.order_depths:
             mid = self._raw_mid(state.order_depths[IPR])
@@ -64,6 +65,7 @@ class Trader:
         if IPR in state.order_depths:
             result[IPR] = self._trade_ipr(state.order_depths[IPR], state.position.get(IPR, 0), is_endgame, is_last_day, ts)
 
+        # Serialize with minimal whitespace to stay under traderData char limits
         return result, 0, json.dumps(data, separators=(",", ":"))
 
     def _trade_ipr(self, depth: OrderDepth, pos: int, end: bool, last: bool, ts: int) -> List[Order]:
@@ -77,7 +79,6 @@ class Trader:
                 curr -= q
             return orders
 
-        # MICRO-ALPHA: Check Lead/Imbalance to decide entry style
         bb, bv = self._best_bid(depth)
         ba, av = self._best_ask(depth)
         if bb is None or ba is None: return []
@@ -87,20 +88,19 @@ class Trader:
         lead = 0.0 if pop_mid is None else (pop_mid - raw_mid)
         imb = self._imbalance(bv, av)
         
-        # Combined score: predicts immediate upward movement
+        # High Conviction Signal: Requires stronger score to justify crossing 14-tick spread
         score = 0.8 * lead + 2.5 * imb
         target = POSITION_LIMIT - pos
 
         if target > 0:
-            # If signals are strong, cross the spread aggressively
-            if score >= 1.5:
+            if score >= 2.0: # Refined threshold to reduce noise trades
                 for ap, q in sorted(depth.sell_orders.items()):
                     if target <= 0: break
                     take = min(abs(q), target)
                     orders.append(Order(IPR, int(ap), take))
                     target -= take
             
-            # Use passive entry for any remaining target or weak signals
+            # Passive entry to capture drift while avoiding spread tax
             if target > 0 and bb + 1 < ba:
                 post_qty = min(IPR_PASSIVE_CLIP, target)
                 orders.append(Order(IPR, int(bb + 1), int(post_qty)))
@@ -110,7 +110,7 @@ class Trader:
     def _trade_aco(self, depth: OrderDepth, pos: int, end: bool, last: bool, fv: float) -> List[Order]:
         orders = []
         if end and last:
-            # Emergency Closeout
+            # Full liquidation for both directions
             if pos > 0:
                 curr = pos
                 for bp in sorted(depth.buy_orders.keys(), reverse=True):
@@ -118,9 +118,15 @@ class Trader:
                     q = min(depth.buy_orders[bp], curr)
                     orders.append(Order(ACO, int(bp), -q))
                     curr -= q
+            elif pos < 0:
+                curr = -pos
+                for ap in sorted(depth.sell_orders.items()):
+                    if curr <= 0: break
+                    q = min(abs(depth.sell_orders[ap]), curr)
+                    orders.append(Order(ACO, int(ap), q))
+                    curr -= q
             return orders
 
-        # JUMP PROTECTION Logic
         bb, bv = self._best_bid(depth)
         ba, av = self._best_ask(depth)
         if bb is None or ba is None: return []
@@ -134,11 +140,10 @@ class Trader:
         buy_thresh = fv - ACO_BASE_EDGE - skew
         sell_thresh = fv + ACO_BASE_EDGE - skew
 
-        # Adjust thresholds if a jump is detected to avoid being hit on the wrong side
         if jump_up: sell_thresh += ACO_JUMP_BIAS
         if jump_dn: buy_thresh -= ACO_JUMP_BIAS
 
-        # Aggressive takes
+        # Aggressive takes based on skewed thresholds
         curr_pos = pos
         cap_long, cap_short = POSITION_LIMIT - curr_pos, POSITION_LIMIT + curr_pos
         for ap, av in sorted(depth.sell_orders.items()):
@@ -152,16 +157,15 @@ class Trader:
                 orders.append(Order(ACO, int(bp), -q))
                 cap_short -= q; curr_pos -= q
 
-        # Passive quoting with jump-safety
+        # Passive quoting with safety guards for regime jumps
         if bb + 1 < ba - 1:
-            if cap_long > 0 and not jump_dn: # Don't quote buy side if jumping down
+            if cap_long > 0 and not jump_dn:
                 orders.append(Order(ACO, int(bb + 1), cap_long))
-            if cap_short > 0 and not jump_up: # Don't quote sell side if jumping up
+            if cap_short > 0 and not jump_up:
                 orders.append(Order(ACO, int(ba - 1), -cap_short))
 
         return orders
 
-    # Helper methods for micro-signals
     def _best_bid(self, depth: OrderDepth) -> Tuple[Optional[int], int]:
         if not depth.buy_orders: return None, 0
         px = max(depth.buy_orders.keys())
